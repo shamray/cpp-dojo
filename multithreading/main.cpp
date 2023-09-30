@@ -1,6 +1,7 @@
 #include <iostream>
 #include <deque>
 #include <stack>
+#include <queue>
 #include <optional>
 #include <mutex>
 #include <future>
@@ -12,7 +13,7 @@ namespace dojo::lock_based {
         stack() = default;
 
         stack(const stack&) = delete;
-        stack& operator = (const stack&) = delete;
+        stack& operator= (const stack&) = delete;
 
         void push(T val) {
             std::scoped_lock<std::mutex> lock(m_mutex);
@@ -32,9 +33,54 @@ namespace dojo::lock_based {
         mutable std::mutex m_mutex;
         std::stack<T, Cont<T, std::allocator<T>>> m_impl;
     };
+
+    enum class synchronization_policy {
+        coarse_grained,
+        fine_grained
+    };
+
+    template<typename T, synchronization_policy sp, template <typename, typename> class Cont = std::deque>
+    class queue;
+
+
+    template<typename T, template <typename, typename> class Cont>
+    class queue<T, synchronization_policy::coarse_grained, Cont> {
+    public:
+        queue() = default;
+
+        queue(const queue&) = delete;
+        queue& operator= (const queue&) = delete;
+
+        void push(T val) {
+            std::scoped_lock<std::mutex> lock(m_mutex);
+            m_impl.push(std::move(val));
+            m_value_pushed.notify_one();
+        }
+
+        auto pop() -> std::optional<T> {
+            std::unique_lock<std::mutex> lock(m_mutex);
+
+            m_value_pushed.wait(lock, [this](){ return !m_impl.empty(); });
+
+            auto val = m_impl.front();
+            m_impl.pop();
+            return val;
+        }
+
+    private:
+        mutable std::mutex m_mutex;
+        mutable std::condition_variable m_value_pushed;
+        std::queue<T, Cont<T, std::allocator<T>>> m_impl;
+    };
+
+    template<typename T, template <typename, typename> class Cont>
+    class queue<T, synchronization_policy::fine_grained, Cont> {
+
+    };
 }
 
-int main() {
+void test_stack() {
+    std::cout << "LOCK-BASED STACK\n";
     dojo::lock_based::stack<int> my_stack;
 
     auto fut = std::async([&my_stack]{ my_stack.push(2014); });
@@ -50,6 +96,53 @@ int main() {
     std::cout << fut3.get().value() << '\n';
     std::cout << fut4.get().value() << '\n';
     std::cout << fut5.get().value() << '\n';
+}
 
+void test_queue_coarse_grained() {
+    std::cout << "LOCK-BASED QUEUE\n";
+
+    using sp = dojo::lock_based::synchronization_policy;
+    dojo::lock_based::queue<int, sp::coarse_grained> q;
+    q.push(1998);
+    q.push(2003);
+
+    std::cout << *q.pop() << '\n';
+    std::cout << *q.pop() << '\n';
+    q.push(2011);
+    q.push(2014);
+    std::cout << *q.pop() << '\n';
+    q.push(2017);
+    q.push(2020);
+    std::cout << *q.pop() << '\n';
+    std::cout << *q.pop() << '\n';
+    std::cout << *q.pop() << '\n';
+
+    std::jthread push_thread{[&q](){
+        using namespace std::chrono_literals;
+
+        std::this_thread::sleep_for(3s);
+        q.push(777);
+    }};
+
+    std::cout << "waiting for value...\n";
+    std::cout << *q.pop() << '\n';
+}
+
+void test_queue_fine_grained() {
+    std::cout << "LOCK-BASED QUEUE\n";
+
+    using sp = dojo::lock_based::synchronization_policy;
+    dojo::lock_based::queue<int, sp::fine_grained> q;
+    q.push(1998);
+    q.push(2003);
+
+    std::cout << *q.pop() << '\n';
+    std::cout << *q.pop() << '\n';
+}
+
+int main() {
+    test_stack();
+    test_queue_coarse_grained();
+    std::cout << "OK\n";
     return 0;
 }
