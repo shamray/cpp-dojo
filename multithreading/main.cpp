@@ -75,7 +75,44 @@ namespace dojo::lock_based {
 
     template<typename T, template <typename, typename> class Cont>
     class queue<T, synchronization_policy::fine_grained, Cont> {
+    public:
+        queue() = default;
 
+        void push(T val) {
+            auto new_node = std::make_unique<node>(val);
+            auto new_tail = new_node.get();
+            if (m_tail)
+                m_tail->next = std::move(new_node);
+            else
+                m_head = std::move(new_node);
+            m_tail = new_tail;
+        }
+
+        auto pop() -> std::optional<T> {
+            if (m_head.get() == nullptr)
+                return std::nullopt;
+
+            auto res = m_head->value;
+            auto old_head = std::move(m_head);
+            m_head = std::move(old_head->next);
+
+            if (m_head == nullptr)
+                m_tail = nullptr;
+
+            return res;
+        }
+
+    private:
+        struct node {
+            std::unique_ptr<node> next;
+            mutable std::mutex mutex;
+            T value;
+
+            explicit node(T value): value{std::move(value)} {}
+        };
+
+        std::unique_ptr<node> m_head{};
+        node* m_tail{nullptr};
     };
 }
 
@@ -141,6 +178,7 @@ void test_queue_fine_grained() {
 }
 
 int main() {
+    test_queue_fine_grained();
     test_stack();
     test_queue_coarse_grained();
     std::cout << "OK\n";
