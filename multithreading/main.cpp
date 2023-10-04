@@ -5,6 +5,7 @@
 #include <optional>
 #include <mutex>
 #include <future>
+#include <cassert>
 
 namespace dojo::lock_based {
     template<typename T, template <typename, typename> class Cont = std::deque>
@@ -79,26 +80,27 @@ namespace dojo::lock_based {
         queue() = default;
 
         void push(T val) {
-            auto new_node = std::make_unique<node>(val);
-            auto new_tail = new_node.get();
-            if (m_tail)
-                m_tail->next = std::move(new_node);
-            else
-                m_head = std::move(new_node);
+            auto dummy_node = std::make_unique<node>(T{});
+            auto new_tail = dummy_node.get();
+
+            std::scoped_lock tail_lock{m_tail_mutex};
+
+            m_tail->next = std::move(dummy_node);
+            m_tail->value = val;
             m_tail = new_tail;
         }
 
         auto pop() -> std::optional<T> {
-            if (m_head.get() == nullptr)
+            std::scoped_lock head_lock{m_head_mutex};
+
+            if (std::scoped_lock tail_lock{m_tail_mutex}; m_head.get() == m_tail)
                 return std::nullopt;
 
             auto res = m_head->value;
             auto old_head = std::move(m_head);
             m_head = std::move(old_head->next);
 
-            if (m_head == nullptr)
-                m_tail = nullptr;
-
+            assert(m_head != nullptr);
             return res;
         }
 
@@ -111,8 +113,10 @@ namespace dojo::lock_based {
             explicit node(T value): value{std::move(value)} {}
         };
 
-        std::unique_ptr<node> m_head{};
-        node* m_tail{nullptr};
+        std::unique_ptr<node> m_head{std::make_unique<node>(T{})};
+        node* m_tail{m_head.get()};
+        mutable std::mutex m_head_mutex;
+        mutable std::mutex m_tail_mutex;
     };
 }
 
