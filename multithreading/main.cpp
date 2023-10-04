@@ -88,13 +88,15 @@ namespace dojo::lock_based {
             m_tail->next = std::move(dummy_node);
             m_tail->value = val;
             m_tail = new_tail;
+
+            m_value_pushed.notify_one();
         }
 
         auto pop() -> std::optional<T> {
             std::scoped_lock head_lock{m_head_mutex};
 
-            if (std::scoped_lock tail_lock{m_tail_mutex}; m_head.get() == m_tail)
-                return std::nullopt;
+            if (std::unique_lock tail_lock{m_tail_mutex}; m_head.get() == m_tail)
+                m_value_pushed.wait(tail_lock, [this](){ return m_head.get() != m_tail; });
 
             auto res = m_head->value;
             auto old_head = std::move(m_head);
@@ -117,6 +119,7 @@ namespace dojo::lock_based {
         node* m_tail{m_head.get()};
         mutable std::mutex m_head_mutex;
         mutable std::mutex m_tail_mutex;
+        mutable std::condition_variable m_value_pushed;
     };
 }
 
