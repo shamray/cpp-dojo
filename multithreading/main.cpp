@@ -74,8 +74,8 @@ namespace dojo::lock_based {
         std::queue<T, Cont<T, std::allocator<T>>> m_impl;
     };
 
-    template<typename T, template <typename, typename> class Cont>
-    class queue<T, synchronization_policy::fine_grained, Cont> {
+    template<typename T>
+    class queue<T, synchronization_policy::fine_grained> {
     public:
         queue() = default;
 
