@@ -52,9 +52,9 @@ namespace dojo::lock_based {
         queue(const queue&) = delete;
         queue& operator= (const queue&) = delete;
 
-        void push(T val) {
+        void push(T value) {
             std::scoped_lock<std::mutex> lock(m_mutex);
-            m_impl.push(std::move(val));
+            m_impl.push(std::move(value));
             m_value_pushed.notify_one();
         }
 
@@ -79,14 +79,14 @@ namespace dojo::lock_based {
     public:
         queue() = default;
 
-        void push(T val) {
+        void push(T value) {
             auto dummy_node = std::make_unique<node>(T{});
             auto new_tail = dummy_node.get();
 
             std::scoped_lock tail_lock{m_tail_mutex};
 
             m_tail->next = std::move(dummy_node);
-            m_tail->value = val;
+            m_tail->value = value;
             m_tail = new_tail;
 
             m_value_pushed.notify_one();
@@ -95,8 +95,10 @@ namespace dojo::lock_based {
         auto pop() -> std::optional<T> {
             std::scoped_lock head_lock{m_head_mutex};
 
-            if (std::unique_lock tail_lock{m_tail_mutex}; m_head.get() == m_tail)
+            {
+                std::unique_lock tail_lock{m_tail_mutex};
                 m_value_pushed.wait(tail_lock, [this](){ return m_head.get() != m_tail; });
+            }
 
             auto res = m_head->value;
             auto old_head = std::move(m_head);
