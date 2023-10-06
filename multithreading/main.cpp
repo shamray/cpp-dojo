@@ -58,14 +58,32 @@ namespace dojo::lock_based {
             m_value_pushed.notify_one();
         }
 
-        auto pop() -> std::optional<T> {
+        template <typename Rep, typename Period>
+        auto pop(std::optional<std::chrono::duration<Rep, Period>> duration) -> std::optional<T> {
             std::unique_lock<std::mutex> lock(m_mutex);
 
-            m_value_pushed.wait(lock, [this](){ return !m_impl.empty(); });
+            if (!wait_push(duration, lock))
+                return std::nullopt;
 
             auto val = m_impl.front();
             m_impl.pop();
             return val;
+        }
+
+        auto pop() -> std::optional<T> {
+            return pop(std::optional<std::chrono::seconds>{});
+        }
+
+    private:
+        template <typename Rep, typename Period>
+        auto wait_push(std::optional<std::chrono::duration<Rep, Period>> duration, auto& lock) const {
+            auto wait_predicate = [this](){ return !m_impl.empty(); };
+            if (duration.has_value()) {
+                return m_value_pushed.wait_for(lock, duration.value(), wait_predicate);
+            } else {
+                m_value_pushed.wait(lock, wait_predicate);
+                return true;
+            }
         }
 
     private:
@@ -92,13 +110,12 @@ namespace dojo::lock_based {
             m_value_pushed.notify_one();
         }
 
-        auto pop() -> std::optional<T> {
+        template <typename Rep, typename Period>
+        auto pop(std::optional<std::chrono::duration<Rep, Period>> duration) -> std::optional<T> {
             std::scoped_lock head_lock{m_head_mutex};
 
-            {
-                std::unique_lock tail_lock{m_tail_mutex};
-                m_value_pushed.wait(tail_lock, [this](){ return m_head.get() != m_tail; });
-            }
+            if (!wait_push(duration))
+                return std::nullopt;
 
             auto res = m_head->value;
             auto old_head = std::move(m_head);
@@ -106,6 +123,24 @@ namespace dojo::lock_based {
 
             assert(m_head != nullptr);
             return res;
+        }
+
+        auto pop() -> std::optional<T> {
+            return pop(std::optional<std::chrono::seconds>{});
+        }
+
+    private:
+        template <typename Rep, typename Period>
+        auto wait_push(std::optional<std::chrono::duration<Rep, Period>> duration) const {
+            std::unique_lock tail_lock{m_tail_mutex};
+
+            auto wait_predicate = [this](){ return m_head.get() != m_tail; };
+            if (duration.has_value()) {
+                return m_value_pushed.wait_for(tail_lock, duration.value(), wait_predicate);
+            } else {
+                m_value_pushed.wait(tail_lock, wait_predicate);
+                return true;
+            }
         }
 
     private:
