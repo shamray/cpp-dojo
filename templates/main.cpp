@@ -7,6 +7,10 @@ struct Visitor: T...
     using T::operator()...;
 };
 
+#if (__cplusplus <= 201703L)
+template <typename... T> Visitor(T...) -> Visitor<T...>;
+#endif
+
 int main() {
     std::variant<int, float, std::string> intFloatString { "Hello" };
 
